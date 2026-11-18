@@ -42,7 +42,8 @@ public class ArchivDBackground implements Disposable {
                 }
                 Reflect.set(ui.menufrag, "renderer", null);
                 Element tmp = ui.menuGroup.getChildren().first();
-                if (!(tmp instanceof Group group)) return;
+                if (!(tmp instanceof Group)) return;
+Group group = (Group) tmp;
                 Element render = group.getChildren().first();
                 if (!(render.getClass().isAnonymousClass()
                         && render.getClass().getEnclosingClass() == Group.class
