@@ -1,4 +1,4 @@
-package bluearchive.audio;
+Vpackage bluearchive.audio;
 
 import arc.Core;
 import arc.Events;
