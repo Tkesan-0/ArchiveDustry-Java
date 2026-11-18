@@ -3,6 +3,7 @@ package bluearchive;
 import arc.*;
 import arc.audio.*;
 import arc.files.Fi;
+import arc.math.*;
 import arc.struct.*;
 import arc.util.*;
 import bluearchive.audio.ArchivDMusic;
@@ -14,11 +15,11 @@ import bluearchive.ui.ArchivDUI;
 import bluearchive.ui.overrides.ArchivDBackground;
 import bluearchive.ui.overrides.ArchivDLoadingFragment;
 import bluearchive.ui.overrides.ArchivDSettings;
+import bluearchive.units.*;
 import mindustry.core.Version;
 import mindustry.game.EventType;
 import mindustry.mod.*;
-import bluearchive.units.*;
-import arc.math.*;
+
 import java.time.*;
 import java.time.format.DateTimeFormatter;
 
@@ -27,28 +28,37 @@ import static mindustry.Vars.*;
 
 public class ArchiveDustry extends Mod {
     public static Music recollectionMusic;
-
     public static int foundL2D, loadedL2D, erroredL2D;
 
     public ArchiveDustry() {
-
     }
 
     @Override
-    public void init(){
-        //Use Pal.accent first... experimental Styles
-        //ArchivDStyles.load();
-        if(!mobile || !headless) Core.graphics.setTitle(Core.settings.getAppName()+" v"+Version.buildString()+" | ArchiveDustry v"+mods.getMod("bluearchive").meta.version+ " | "+RandomMessage());
+    public void init() {
+        // ヘッドレス（専用サーバー）環境ではクライアント専用のオーディオ・UI処理をスキップ
+        if (headless) return;
+
+        if (!mobile) {
+            Core.graphics.setTitle(Core.settings.getAppName() + " v" + Version.buildString()
+                    + " | ArchiveDustry v" + mods.getMod("bluearchive").meta.version
+                    + " | " + RandomMessage());
+        }
+
         ArchivDLoadingFragment.init();
         ArchivDSettings.loadSettings();
-        if(Core.settings.getBool("ba-addHalo", true)) {
-            if((mods.getMod("exoprosopa") != null) && (mods.getMod("exoprosopa").enabled())) {
-                    ExopUnitHalo.load();
+
+        if (Core.settings.getBool("ba-addHalo", true)) {
+            if ((mods.getMod("exoprosopa") != null) && (mods.getMod("exoprosopa").enabled())) {
+                ExopUnitHalo.load();
             }
             UnitHalo.init();
         }
-        if(Core.settings.getBool("HinaVoiceEnable") || Core.settings.getBool("ArisuVoiceEnable")) UnitSound.init();
-        if(Core.settings.getBool("enableL2D")) {
+
+        if (Core.settings.getBool("HinaVoiceEnable") || Core.settings.getBool("ArisuVoiceEnable")) {
+            UnitSound.init();
+        }
+
+        if (Core.settings.getBool("enableL2D")) {
             dataDirectory.child("live2d").walk(f -> {
                 foundL2D++;
                 try {
@@ -60,36 +70,45 @@ public class ArchiveDustry extends Mod {
                 }
             });
         }
+
         ArchivDMusic.load();
+
         if (Core.settings.getString("selectedSong") == null) {
             Core.settings.put("selectedSong", "menucm");
         }
+
         if (!Core.graphics.isPortrait() && Core.settings.getBool("enableL2D") && Core.settings.has("setL2D-new")) {
             if (!Core.settings.getString("setL2D-new").isEmpty()) {
                 ArchivDBackground.buildL2D(Core.settings.getString("setL2D-new"));
             } else {
-                Core.settings.put("enableL2D", false); //fallback if setl2d is blank
+                Core.settings.put("enableL2D", false);
                 Core.settings.put("selectedSong", "menucm");
             }
         }
-            Events.on(EventType.ClientLoadEvent.class, event -> {
-                ArchivDUI.init();
-                ArchivDSoundControl.loadSoundControl();
-                ArchivDSoundControl.replaceMainMenu();
-                Log.infoTag("ArchiveDustry", "Fully Loaded!");
-                if (Core.settings.getBool("ba-firstTime")) {
-                    firstTimeDialog.show();
-                }
-                Timer.schedule(() -> control.sound.stop(), 0.1f);
 
-            });
+        Events.on(EventType.ClientLoadEvent.class, event -> {
+            ArchivDUI.init();
+            ArchivDSoundControl.loadSoundControl();
+            ArchivDSoundControl.replaceMainMenu();
+            Log.infoTag("ArchiveDustry", "Fully Loaded!");
+            if (Core.settings.getBool("ba-firstTime")) {
+                firstTimeDialog.show();
+            }
+            Timer.schedule(() -> {
+                if (control != null && control.sound != null) {
+                    control.sound.stop();
+                }
+            }, 0.1f);
+        });
     }
 
-    static String RandomMessage(){
+    static String RandomMessage() {
         Fi msg = tree.get("text/messages.txt");
-        if(!msg.exists()) return "null";
+        if (!msg.exists()) return "null";
         Seq<String> strings = Seq.with(msg.readString("UTF-8").split("\n"));
         int stringLength = strings.size - 1;
-        return (!LocalDate.now().format(DateTimeFormatter.ofPattern("dd-MM")).equals("01-04")) ? strings.get(Mathf.random(stringLength)) : "Que Bom!";
+        return (!LocalDate.now().format(DateTimeFormatter.ofPattern("dd-MM")).equals("01-04"))
+                ? strings.get(Mathf.random(stringLength))
+                : "Que Bom!";
     }
 }
