@@ -2,16 +2,12 @@ package bluearchive.audio;
 
 import arc.Core;
 import arc.Events;
-import arc.audio.Filters;
 import arc.audio.Music;
 import arc.audio.Sound;
 import arc.files.Fi;
-import arc.math.Mathf;
 import arc.struct.Seq;
-import arc.util.*;
+import arc.util.Nullable;
 import bluearchive.ui.overrides.ArchivDLoadingFragment;
-import mindustry.audio.SoundControl;
-import mindustry.content.StatusEffects;
 import mindustry.game.EventType;
 import mindustry.gen.Musics;
 import mindustry.gen.Sounds;
@@ -23,184 +19,137 @@ import static bluearchive.ArchiveDustry.recollectionMusic;
 import static bluearchive.audio.ArchivDMusic.*;
 import static bluearchive.ui.ArchivDUI.*;
 import static mindustry.Vars.*;
-import static mindustry.Vars.tree;
 
-public class ArchivDSoundControl extends SoundControl {
-    public static Seq<Music> ambientMusic, darkMusic, waveMusic, bossMusic = Seq.with();
-    protected @Nullable Music current;
-    private boolean previousLoadFragShow = false;
+public class ArchivDSoundControl {
+    private static boolean previousLoadFragShow = false;
+    private static @Nullable Music cachedMenuCm, cachedMenuReAoh;
+    private static @Nullable Music activeCustomUiMusic = null;
 
     public static void loadSoundControl() {
-        control.sound = new ArchivDSoundControl();
-        control.sound.stop();
-    }
+        if (headless || control == null || control.sound == null) return;
 
-    @Override
-    protected void reload() {
-        current = null;
-        fade = 0f;
-        ambientMusic = Seq.with(Musics.game1, Musics.game3, Musics.game6, Musics.game8, Musics.game9, Musics.fine, dawn, cat, bunny, game10, honey, amplify, t171, theme220);
-        darkMusic = Seq.with(Musics.game7, Musics.game4, aira, sugar, hare, oriental, dreamer, game11,moment, somedaySometime, theme228);
-        waveMusic = Seq.with(Musics.game2, Musics.game5, wave1, aspiration, wave2, wave3, wave4);
-        bossMusic = Seq.with(Musics.boss1, Musics.boss2, boss3, boss4);
+        // Mindustry本体のSoundControlを乗っ取らず、純正のプレイリストに直接ブルアカ楽曲を追加・再構築する
+        Events.on(EventType.MusicRegisterEvent.class, e -> registerCustomMusics());
+        registerCustomMusics();
 
-        for(var sound : Core.assets.getAll(Sound.class, new Seq<>())) {
-            var file = Fi.get(Core.assets.getAssetFileName(sound));
-            if (file.parent().name().equals("ui")) {
-                sound.setBus(uiBus);
-            }
-        }
-        Events.fire(new EventType.MusicRegisterEvent());
-    }
-
-    @Override
-    public void update() {
-        boolean paused = state.isGame() && Core.scene.hasDialog();
-        boolean playing = state.isGame();
-
-        //check if current track is finished
-        if (current != null && !current.isPlaying()) {
-            current = null;
-            fade = 0f;
-        }
-
-        //fade the lowpass filter in/out, poll every 30 ticks just in case performance is an issue
-        if (timer.get(1, 30f)) {
-            Core.audio.soundBus.fadeFilterParam(0, Filters.paramWet, paused ? 1f : 0f, 0.4f);
-        }
-
-        //play/stop ordinary effects
-        if (playing != wasPlaying) {
-            wasPlaying = playing;
-
-            if (playing) {
-                Core.audio.soundBus.play();
-                setupFilters();
-            } else {
-                //stopping a single audio bus stops everything else, yay!
-                Core.audio.soundBus.stop();
-                //play music bus again, as it was stopped above
-                Core.audio.musicBus.play();
-
-                Core.audio.soundBus.play();
+        // UIバスの割り当て
+        for (var sound : Core.assets.getAll(Sound.class, new Seq<>())) {
+            String path = Core.assets.getAssetFileName(sound);
+            if (path != null && Fi.get(path).parent().name().equals("ui")) {
+                sound.setBus(control.sound.uiBus);
             }
         }
 
-        Core.audio.setPaused(Core.audio.soundBus.id, state.isPaused());
+        // 毎フレームのUIBGM制御（本体のupdate()と競合しない安全なフック）
+        Events.run(EventType.Trigger.update, ArchivDSoundControl::updateCustomUiMusic);
+    }
 
-        if(ArchivDLoadingFragment.loadFragShow && !previousLoadFragShow){
-                Sounds.uiChat.play();
+    private static void registerCustomMusics() {
+        if (headless || control == null || control.sound == null) return;
+
+        // 重複追加を防ぎつつ、本体のプレイリストに楽曲を登録
+        addUnique(control.sound.ambientMusic, dawn, cat, bunny, game10, honey, amplify, t171, theme220);
+        addUnique(control.sound.darkMusic, aira, sugar, hare, oriental, dreamer, game11, moment, somedaySometime, theme228);
+        addUnique(control.sound.waveMusic, wave1, aspiration, wave2, wave3, wave4);
+        addUnique(control.sound.bossMusic, boss3, boss4);
+    }
+
+    private static void addUnique(Seq<Music> target, Music... musics) {
+        if (target == null) return;
+        for (Music m : musics) {
+            if (m != null && !target.contains(m)) {
+                target.add(m);
+            }
+        }
+    }
+
+    private static void updateCustomUiMusic() {
+        if (headless || state == null || ui == null || control == null || control.sound == null) return;
+
+        // ロード画面の効果音
+        if (ArchivDLoadingFragment.loadFragShow && !previousLoadFragShow) {
+            if (Sounds.uiChat != null) Sounds.uiChat.play();
         }
         previousLoadFragShow = ArchivDLoadingFragment.loadFragShow;
 
-        // Menu state
+        // 現在のUI画面に応じた専用BGMの判定
+        Music desiredUiMusic = null;
+
         if (state.isMenu()) {
-            silenced = false;
-
-            // Planet view
-            if (ui.planet.isShown()) {
-                // Database handling in planet view
-                if (ui.database.isShown() && !ui.research.isShown()) {
-                    this.stop();
-                    if(!database.isPlaying()) database.play();
-                } else {
-                    if(database != null) database.stop();
+            if (ui.planet != null && ui.planet.isShown()) {
+                if (ui.research != null && ui.research.isShown()) {
+                    desiredUiMusic = research;
+                } else if (ui.database != null && ui.database.isShown()) {
+                    desiredUiMusic = database;
+                } else if (ui.planet.loadouts != null && ui.planet.loadouts.isShown()) {
+                    desiredUiMusic = loadout;
                 }
-
-                // Research handling in planet view
-                if (ui.research.isShown()) {
-                    this.stop();
-                    if(!research.isPlaying()) research.play();
-                } else {
-                    if(research != null) research.stop();
+            } else if (ui.editor == null || !ui.editor.isShown()) {
+                if (ui.database != null && ui.database.isShown()) {
+                    desiredUiMusic = database;
+                } else if (creditsDialog != null && creditsDialog.isShown()) {
+                    desiredUiMusic = re_aoh;
                 }
-
-                // Loadouts handling in planet view
-                if (ui.planet.loadouts.isShown()) {
-                    this.stop();
-                    if(!loadout.isPlaying()) loadout.play();
-                } else {
-                    if(loadout != null) loadout.stop();
-                }
-
-                // Play planet music
-                play(ui.planet.state.planet.launchMusic);
-            } else if (ui.editor.isShown()) {
-                play(Musics.editor);
-            } else {
-                 if (ui.database.isShown()) {
-                     this.stop();
-                     if(!database.isPlaying()) database.play();
-                } else if (creditsDialog.isShown()) {
-                     this.stop();
-                     if(!re_aoh.isPlaying()) re_aoh.play();
-                 } else {
-                     if(database != null) database.stop();
-                     if(re_aoh != null) re_aoh.stop();
-                 }
-                play(Musics.menu);
             }
-        } 
-        // Editor state
-        else if (state.rules.editor) {
-            silenced = false;
-            play(Musics.editor);
-        } 
-        // In-game state
-        else {
-            // Fade out the last track to make way for ingame music
-            silence();
-
-            // Database handling in game
-            if (ui.database.isShown()) {
-                this.stop();
-                if(!database.isPlaying()) database.play();
-            } else {
-                if(database != null) database.stop();
-            }
-
-            // Research handling in game
-            if (ui.research.isShown()) {
-                this.stop();
-                if(!research.isPlaying()) research.play();
-            } else {
-                if(research != null) research.stop();
-            }
-
-            // Schematics handling in game
-            if (ui.schematics.isShown()) {
-                this.stop();
-                if(!loadout.isPlaying()) loadout.play();
-            } else {
-                if(loadout != null) loadout.stop();
-            }
-
-            // Random music playback logic
-            if (Core.settings.getBool("alwaysmusic")) {
-                if (current == null) {
-                    playRandom();
-                }
-            } else if (Time.timeSinceMillis(lastPlayed) > 1000 * musicInterval / 60f) {
-                // Chance to play music per interval
-                if (Mathf.chance(musicChance)) {
-                    lastPlayed = Time.millis();
-                    playRandom();
-                }
+        } else if (!state.rules.editor) {
+            // ゲームプレイ中（ソロ・マルチ共通）
+            if (ui.database != null && ui.database.isShown()) {
+                desiredUiMusic = database;
+            } else if (ui.research != null && ui.research.isShown()) {
+                desiredUiMusic = research;
+            } else if (ui.schematics != null && ui.schematics.isShown()) {
+                desiredUiMusic = loadout;
             }
         }
-        updateLoops();
+
+        // 専用UI画面が開かれている場合のみ本体BGMを一時停止して専用曲を再生
+        if (desiredUiMusic != null) {
+            if (activeCustomUiMusic != desiredUiMusic) {
+                stopAllCustomUiMusic();
+                control.sound.stop();
+                activeCustomUiMusic = desiredUiMusic;
+            }
+            if (!desiredUiMusic.isPlaying()) {
+                control.sound.stop();
+                desiredUiMusic.play();
+            }
+        } else if (activeCustomUiMusic != null) {
+            // UI画面を閉じたら専用曲を停止し、本体のBGM制御に安全に返す
+            stopAllCustomUiMusic();
+            activeCustomUiMusic = null;
+        }
+    }
+
+    private static void stopAllCustomUiMusic() {
+        Music[] uiTracks = {database, research, loadout, re_aoh};
+        for (Music m : uiTracks) {
+            if (m != null && m.isPlaying()) {
+                m.stop();
+            }
+        }
     }
 
     public static void replaceMainMenu() {
-        switch (Core.settings.getString("selectedSong")) {
+        if (headless) return;
+
+        boolean isAprilFools = LocalDate.now().format(DateTimeFormatter.ofPattern("dd-MM")).equals("01-04");
+        if (isAprilFools && ArchivDMusic.funnyAhh != null) {
+            Musics.menu = ArchivDMusic.funnyAhh;
+            return;
+        }
+
+        String selected = Core.settings.getString("selectedSong", "menucm");
+        switch (selected) {
             case "menucm":
-                if (Musics.menu != tree.loadMusic("menucm")) Musics.menu = !LocalDate.now().format(DateTimeFormatter.ofPattern("dd-MM")).equals("01-04") ? tree.loadMusic("menucm") : ArchivDMusic.funnyAhh;
+                if (cachedMenuCm == null) cachedMenuCm = tree.loadMusic("menucm");
+                if (cachedMenuCm != null) Musics.menu = cachedMenuCm;
                 break;
             case "menure-aoh":
-                if (Musics.menu != tree.loadMusic("menure-aoh")) Musics.menu = !LocalDate.now().format(DateTimeFormatter.ofPattern("dd-MM")).equals("01-04") ? tree.loadMusic("menure-aoh") : ArchivDMusic.funnyAhh;
+                if (cachedMenuReAoh == null) cachedMenuReAoh = tree.loadMusic("menure-aoh");
+                if (cachedMenuReAoh != null) Musics.menu = cachedMenuReAoh;
                 break;
             case "recollection":
-                if (Musics.menu != recollectionMusic && recollectionMusic != null) Musics.menu = !LocalDate.now().format(DateTimeFormatter.ofPattern("dd-MM")).equals("01-04") ? recollectionMusic : ArchivDMusic.funnyAhh;
+                if (recollectionMusic != null) Musics.menu = recollectionMusic;
                 break;
         }
     }
