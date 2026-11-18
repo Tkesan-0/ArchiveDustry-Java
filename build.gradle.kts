@@ -1,9 +1,7 @@
 import arc.files.*
 import arc.util.*
 import arc.util.serialization.*
-import ent.*
 import java.io.*
-
 buildscript{
     val arcVersion: String by project
     val useJitpack = property("mindustryBE").toString().toBooleanStrict()
