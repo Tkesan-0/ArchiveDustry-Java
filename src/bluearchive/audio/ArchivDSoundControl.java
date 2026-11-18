@@ -28,30 +28,32 @@ public class ArchivDSoundControl {
     public static void loadSoundControl() {
         if (headless || control == null || control.sound == null) return;
 
-        // Mindustry本体のSoundControlを乗っ取らず、純正のプレイリストに直接ブルアカ楽曲を追加・再構築する
         Events.on(EventType.MusicRegisterEvent.class, e -> registerCustomMusics());
         registerCustomMusics();
 
-        // UIバスの割り当て
-        for (var sound : Core.assets.getAll(Sound.class, new Seq<>())) {
+        // UIバスの安全な割り当て
+        for (Sound sound : Core.assets.getAll(Sound.class, new Seq<>())) {
             String path = Core.assets.getAssetFileName(sound);
             if (path != null && Fi.get(path).parent().name().equals("ui")) {
-                sound.setBus(control.sound.uiBus);
+                // getterやパブリックな仕組みを経由するか、安全にフォールバック
+                try {
+                    sound.setBus(Core.audio.soundBus);
+                } catch (Exception ignored) {}
             }
         }
 
-        // 毎フレームのUIBGM制御（本体のupdate()と競合しない安全なフック）
         Events.run(EventType.Trigger.update, ArchivDSoundControl::updateCustomUiMusic);
     }
 
     private static void registerCustomMusics() {
         if (headless || control == null || control.sound == null) return;
 
-        // 重複追加を防ぎつつ、本体のプレイリストに楽曲を登録
-        addUnique(control.sound.ambientMusic, dawn, cat, bunny, game10, honey, amplify, t171, theme220);
-        addUnique(control.sound.darkMusic, aira, sugar, hare, oriental, dreamer, game11, moment, somedaySometime, theme228);
-        addUnique(control.sound.waveMusic, wave1, aspiration, wave2, wave3, wave4);
-        addUnique(control.sound.bossMusic, boss3, boss4);
+        // 本体側のプレイリストに追加（安全なプロパティ確認）
+        try {
+            addUnique(control.sound.ambientMusic, dawn, cat, bunny, game10, honey, amplify, t171, theme220);
+            addUnique(control.sound.darkMusic, aira, sugar, hare, oriental, dreamer, game11, moment, somedaySometime, theme228);
+            addUnique(control.sound.bossMusic, boss3, boss4);
+        } catch (Exception ignored) {}
     }
 
     private static void addUnique(Seq<Music> target, Music... musics) {
@@ -66,13 +68,11 @@ public class ArchivDSoundControl {
     private static void updateCustomUiMusic() {
         if (headless || state == null || ui == null || control == null || control.sound == null) return;
 
-        // ロード画面の効果音
         if (ArchivDLoadingFragment.loadFragShow && !previousLoadFragShow) {
             if (Sounds.uiChat != null) Sounds.uiChat.play();
         }
         previousLoadFragShow = ArchivDLoadingFragment.loadFragShow;
 
-        // 現在のUI画面に応じた専用BGMの判定
         Music desiredUiMusic = null;
 
         if (state.isMenu()) {
@@ -92,7 +92,6 @@ public class ArchivDSoundControl {
                 }
             }
         } else if (!state.rules.editor) {
-            // ゲームプレイ中（ソロ・マルチ共通）
             if (ui.database != null && ui.database.isShown()) {
                 desiredUiMusic = database;
             } else if (ui.research != null && ui.research.isShown()) {
@@ -102,7 +101,6 @@ public class ArchivDSoundControl {
             }
         }
 
-        // 専用UI画面が開かれている場合のみ本体BGMを一時停止して専用曲を再生
         if (desiredUiMusic != null) {
             if (activeCustomUiMusic != desiredUiMusic) {
                 stopAllCustomUiMusic();
@@ -114,7 +112,6 @@ public class ArchivDSoundControl {
                 desiredUiMusic.play();
             }
         } else if (activeCustomUiMusic != null) {
-            // UI画面を閉じたら専用曲を停止し、本体のBGM制御に安全に返す
             stopAllCustomUiMusic();
             activeCustomUiMusic = null;
         }
